@@ -42,7 +42,7 @@ func main() {
 	flag.Parse()
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: crtsh [-l=true|false] domain.com")
+		fmt.Fprintf(os.Stderr, "usage: crtsh [options] domain.com")
 		os.Exit(1)
 	}
 
