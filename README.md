@@ -35,5 +35,3 @@ $ ./crtsh -a=false -l=true -t=true google.com # check for live hosts, dont show 
 |  17 | alt1.gmail-smtp-in.l.google.com | 142.250.153.27                                                                                       |
 |  18 | adwords.google.com              | 142.250.110.139, 142.250.110.100, 142.250.110.138, 142.250.110.101, 142.250.110.102, 142.250.110.113 |
 ```
-
-Insid
