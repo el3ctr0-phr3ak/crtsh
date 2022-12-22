@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +35,8 @@ type result struct {
 
 func main() {
 	checkLive := flag.Bool("l", false, "check whether host is live")
+	all := flag.Bool("a", false, "print unresolvable")
+	tbl := flag.Bool("t", true, "print results as table")
 	dns := flag.String("d", "8.8.8.8", "dns server to use")
 	port := flag.Int("p", 53, "dns port number")
 	flag.Parse()
@@ -59,7 +64,11 @@ func main() {
 	q.Add("output", "json")
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -75,7 +84,7 @@ func main() {
 	for _, rec := range records {
 		values := strings.Split(rec.NameValue, "\n")
 		for _, val := range values {
-			if val[0] != '*' {
+			if val[0] != '*' && !strings.Contains(val, "@") {
 				names[val] = struct{}{}
 			}
 		}
@@ -94,8 +103,8 @@ func main() {
 
 		var results []*result
 
-		ch := make(chan string, 10)
-		res := make(chan *result, 10)
+		ch := make(chan string, len(names))
+		res := make(chan *result, len(names))
 		var wg sync.WaitGroup
 		wg.Add(10)
 
@@ -114,24 +123,97 @@ func main() {
 		}
 		close(ch)
 
-		go func() {
-			wg.Wait()
-			close(res)
-		}()
+		wg.Wait()
+		close(res)
 
-		countUnresolvable := 0
-		for _, r := range results {
-			if len(r.ips) == 1 && r.ips[0] == "unresolvable" {
-				countUnresolvable++
+		if *tbl {
+			printLiveResults(domain, results, *all)
+		} else {
+			countUnresolvable := 0
+			for _, r := range results {
+				if len(r.ips) == 1 && r.ips[0] == "unresolvable" {
+					countUnresolvable++
+				}
+			}
+
+			fmt.Printf("[*] Checked live domains for %q - %d (%d resolvable; %d unresolvable)\n",
+				domain, len(results), len(results)-countUnresolvable, countUnresolvable)
+			for _, r := range results {
+				ips := strings.Join(r.ips, ", ")
+				if ips == "unresolvable" {
+					if *all {
+						fmt.Printf("[*] %s => %s\n", r.hostname, ips)
+					}
+				} else {
+					fmt.Printf("[*] %s => %s\n", r.hostname, ips)
+				}
 			}
 		}
-
-		fmt.Printf("[*] Fetched domains for %q (%d resolvable; %d unresolvable\n",
-			domain, len(results)-countUnresolvable, countUnresolvable)
-		for _, r := range results {
-			fmt.Printf("[*] %s => %s\n", r.hostname, strings.Join(r.ips, ", "))
+	} else {
+		if *tbl {
+			printBasicTable(domain, names)
+		} else {
+			fmt.Printf("[*] Extracted data for %q\n", domain)
+			for name := range names {
+				fmt.Printf("[*] %s\n", name)
+			}
 		}
 	}
+}
+
+func printBasicTable(domain string, data map[string]struct{}) {
+	i := 0
+	domains := make([]string, len(data))
+	for name := range data {
+		domains[i] = name
+		i++
+	}
+
+	sort.Strings(domains)
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"#", "Name"})
+
+	for i, name := range domains {
+		t.AppendRow(table.Row{i + 1, name})
+	}
+
+	title := fmt.Sprintf("Extracted domains for %q", domain)
+	t.SetTitle(title)
+	t.Style().Title.Align = text.AlignCenter
+
+	t.Render()
+}
+
+func printLiveResults(domain string, results []*result, all bool) {
+	countUnresolvable := 0
+	for _, r := range results {
+		if len(r.ips) == 1 && r.ips[0] == "unresolvable" {
+			countUnresolvable++
+		}
+	}
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetIndexColumn(1)
+
+	t.AppendHeader(table.Row{"#", "Name", "IP Addresses"})
+
+	for i, r := range results {
+		ips := strings.Join(r.ips, ", ")
+		if ips == "unresolvable" && !all {
+			continue
+		} else {
+			t.AppendRow(table.Row{i + 1, r.hostname, ips})
+		}
+	}
+
+	title := fmt.Sprintf("Live domains for %q (%d resolvable; %d unresolvable)", domain,
+		len(results)-countUnresolvable, countUnresolvable)
+	t.SetTitle(title)
+	t.Style().Title.Align = text.AlignCenter
+
+	t.Render()
 }
 
 func check(r *net.Resolver, ch <-chan string, res chan<- *result, wg *sync.WaitGroup) {
